@@ -1,0 +1,324 @@
+package jp.jaxa.iss.kibo.rpc.defaultapk;
+
+import org.opencv.aruco.Aruco;
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+import org.opencv.core.Rect;
+import org.opencv.core.Scalar;
+import org.opencv.imgproc.Imgproc;
+
+import java.util.ArrayList;
+
+import gov.nasa.arc.astrobee.Kinematics;
+import gov.nasa.arc.astrobee.types.Point;
+import gov.nasa.arc.astrobee.types.Quaternion;
+import jp.jaxa.iss.kibo.rpc.api.KiboRpcService;
+
+/**
+ * Class meant to handle commands from the Ground Data System and execute them in Astrobee
+ */
+
+public class YourService extends KiboRpcService {
+    @Override
+    protected void runPlan1(){
+        // write here your plan 1
+        api.startMission();
+
+        moveTo(10.71000, -7.77000, 4.48000, 0f, 0.707f, 0f, 0.707f);
+
+        api.reportPoint1Arrival();
+//        readAR(true);
+
+        api.laserControl(true);
+        api.takeTarget1Snapshot();
+        api.laserControl(false);
+
+//        moveTo(11.03400, -7.70000, 5.29881, 0f, 0f, -0.707f, 0.707f);
+//        moveTo(11.03400, -9.92284, 5.29881, 0f, 0f, -0.707f, 0.707f);
+
+        moveTo(11.074, -8.4, 5.29881, 0f, 0f, -0.707f, 0.707f);
+        moveTo(11.074, -9.472, 5.29881, 0f, 0f, -0.707f, 0.707f);
+
+        moveTo(11.27460, -9.92284, 5.29881, 0f, 0f, -0.707f, 0.707f);
+//        moveTo(11.33, -9.92284, 5.29881, 0f, 0f, -0.707f, 0.707f);
+
+        sleep(5);
+        readAR(false);
+
+        api.laserControl(true);
+        api.takeTarget2Snapshot();
+        api.laserControl(false);
+
+//        moveTo(11.03400, -9.92284, 5.29881, 0f, 0f, -0.707f, 0.707f);
+//        moveTo(11.03400, -7.89178, 5.29881, 0f, 0f, -0.707f, 0.707f);
+
+        moveTo(11.074, -9.472, 5.29881, 0f, 0f, -0.707f, 0.707f);
+        moveTo(11.074, -8.4, 5.29881, 0f, 0f, -0.707f, 0.707f);
+
+        moveTo(11.27460, -7.89178, 4.96538, 0f, 0f, -0.707f, 0.707f);
+
+        api.reportMissionCompletion();
+    }
+
+    private void moveTo(double X,double Y,double Z,float Qx,float Qy,float Qz,float Qw) {
+        gov.nasa.arc.astrobee.Result check;
+        int count = 0,ForMax = 3;
+        Point point = new Point(X,Y,Z);
+        Quaternion quaternion = new Quaternion(Qx,Qy,Qz,Qw);
+        do {
+            count++;
+            check = api.moveTo(point, quaternion, true);
+        }while (!check.hasSucceeded() && count < ForMax);
+    }
+
+    private void moveTo(double X,double Y,double Z, Quaternion quaternion) {
+        gov.nasa.arc.astrobee.Result check;
+        int count = 0,ForMax = 3;
+        Point point = new Point(X,Y,Z);
+        do {
+            count++;
+            check = api.moveTo(point, quaternion, true);
+        }while (!check.hasSucceeded() && count < ForMax);
+    }
+
+    public Mat UndistortInfo(boolean check) {
+        Mat cameraMatrix = new Mat(3, 3, CvType.CV_32FC1);
+        Mat distortMatrix = new Mat(1, 5, CvType.CV_32FC1);
+
+        double[] cameraPut = new double[] {567.229305D, 0.0D, 659.077221D, 0.0D, 574.192915D, 517.007571D, 0.0D, 0.0D, 1.0D};
+        double[] distortPut = new double[] {-0.216247D, 0.03875D, -0.010157D, 0.001969D, 0.0D};
+
+        cameraMatrix.put(0,0,cameraPut);
+        distortMatrix.put(0,0,distortPut);
+
+        // if true : return cameraMatrix
+        // if false : return distortMatrix
+        if (check) {
+            return cameraMatrix;
+        } else {
+            return distortMatrix;
+        }
+    }
+
+    private void readAR(boolean target) {
+        Mat image = undistord(api.getMatNavCam());
+        ArrayList<Mat> corners = new ArrayList<>();
+        Mat ids = new Mat();
+        Aruco.detectMarkers(image, Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250), corners, ids);
+        Mat camMatrix = UndistortInfo(true);
+        Mat dstMatrix = UndistortInfo(false);
+
+        if (ids.size().height > 0) {
+            float markerSize = 0.05f;
+            Mat rvecs = new Mat();
+            Mat tvecs = new Mat();
+
+            Aruco.estimatePoseSingleMarkers(corners, markerSize, camMatrix, dstMatrix, rvecs, tvecs);
+            double target_z = 0;
+            System.out.println("detected AR " + rvecs.size().height);
+
+            for (int i = 0; i < rvecs.size().height; i++) {
+                Mat tvec = new Mat(1, 3, CvType.CV_64FC1);
+                tvec.put(0, 0, tvecs.get(i, 0));
+
+                double pos_z = tvec.get(0, 2)[0];
+
+                target_z += pos_z;
+            }
+            target_z = target_z/ids.size().height;
+
+            double y_middle = 0, x_middle = 0, first_ar_x = 10000, first_ar_y = 10000, last_ar_x = 0, last_ar_y = 0, x_from_middle = 0, y_from_middle = 0;
+
+            if (ids.size().height == 4) {
+                double ar_size = 0;
+                for (Mat corner : corners) {
+                    double x = 0;
+                    double y = 0;
+                    for (int j = 0; j < corner.size().width; j++) {
+                        x += corner.get(0, j)[0];
+                        y += corner.get(0, j)[1];
+
+                        if (corner.get(0, j)[0] > last_ar_x) {
+                            last_ar_x = corner.get(0, j)[0];
+                        }
+                        if (corner.get(0, j)[1] > last_ar_y) {
+                            last_ar_y = corner.get(0, j)[1];
+                        }
+
+                        if (corner.get(0, j)[0] < first_ar_x) {
+                            first_ar_x = corner.get(0, j)[0];
+                        }
+                        if (corner.get(0, j)[1] < first_ar_y) {
+                            first_ar_y = corner.get(0, j)[1];
+                        }
+                    }
+                    ar_size += Math.abs(corner.get(0, 0)[0] - corner.get(0, 1)[0]);
+                    ar_size += Math.abs(corner.get(0, 2)[0] - corner.get(0, 3)[0]);
+                    ar_size += Math.abs(corner.get(0, 0)[1] - corner.get(0, 3)[1]);
+                    ar_size += Math.abs(corner.get(0, 1)[1] - corner.get(0, 2)[1]);
+                    x_from_middle += x / 4.0;
+                    y_from_middle += y / 4.0;
+                }
+                ar_size /= 16;
+                x_from_middle /= 4;
+                y_from_middle /= 4;
+
+                if (target) {
+                    x_middle = ((x_from_middle - 640)*markerSize)/ar_size;
+                    y_middle = ((480 - y_from_middle)*markerSize)/ar_size;
+                } else {
+                    Mat cropped = new Mat(image, new Rect((int) first_ar_x,(int) first_ar_y,(int) (last_ar_x-first_ar_x),(int) (last_ar_y-first_ar_y)));
+                    org.opencv.core.Point target_position = FindCircle(cropped);
+                    first_ar_x += target_position.x;
+                    first_ar_y += target_position.y;
+
+                    x_middle = ((first_ar_x - 640)*markerSize)/ar_size;
+                    y_middle = ((480 - first_ar_y)*markerSize)/ar_size;
+                }
+            }
+
+            System.out.println(" X : " + x_middle + " Y : " + y_middle + " Z : " + target_z);
+            if (x_middle < 0.016){
+                x_middle += 0.01;
+            } else if (x_middle < 0.02) {
+                x_middle += 0.0075;
+            } else if (x_middle < 0.022) {
+                x_middle += 0.005;
+            }
+
+            if (x_middle > 0.065) {
+                x_middle -= 0.01;
+            }
+
+            System.out.println("new X: " + x_middle);
+//            moveTo(11.27460, -9.92284, 5.29881 - (y_middle - 0.0335), EulerRotation(0,0,-90 - AngleCalculation(false, target_z + 0.1177, x_middle - 0.0522)));
+            moveTo(11.27460, -9.92284, 5.29881 - (y_middle - 0.0355), EulerRotation(0,0,-90 - AngleCalculation(false, target_z + 0.1177, x_middle - 0.0522)));
+        }
+
+    }
+
+    private double AngleCalculation(boolean axis, double a, double b) {
+        double r1, r2, h, p, deep = 0.1302;
+        double d = Math.sqrt((a*a)+(b*b));
+
+        if (axis) {
+            // z axis according to guide book
+            h = 0.1111;
+            r1 = 0.1711585522;
+            p = 2 * r1 * Math.cos(Math.toRadians(180 - 139.525787));
+        } else {
+            // y axis according to guide book
+            h = 0.0572;
+            r1 = 0.1422106888;
+            p = 2 * r1 * Math.cos(Math.toRadians(180 - 156.2829577));
+        }
+
+        r2 = (-p + Math.sqrt(Math.pow(p, 2) - 4 * (Math.pow(r1, 2) - Math.pow(a, 2)))) / 2;
+
+        double x, y;
+        double sqr = Math.sqrt(((2*((r1*r1)+(r2*r2)))/(d*d))-((((r1*r1)-(r2*r2))*((r1*r1)-(r2*r2)))/(d*d*d*d))-1);
+        double smt = (((r1*r1)-(r2*r2))/(2*d*d));
+
+        double y1 = (0.5*b)+(smt*b)+(0.5*sqr*(-a));
+        double y2 = (0.5*b)+(smt*b)-(0.5*sqr*(-a));
+
+        double x1 = (0.5*a)+(smt*a)+(0.5*sqr*b);
+        double x2 = (0.5*a)+(smt*a)-(0.5*sqr*b);
+
+        if (y1 > y2) {
+            y = y1;
+            x = x1;
+        } else {
+            y = y2;
+            x = x2;
+        }
+        double c = Math.sqrt(Math.pow((y-h), 2) + Math.pow((x-deep), 2));
+        double angle = Math.toDegrees(Math.acos(((2*r1*r1)-(c*c))/(2*r1*r1)));
+        System.out.println("Angle: " + angle);
+
+        if (angle > 0){
+            return angle;
+        } else {
+            readAR(false);
+            return angle;
+        }
+    }
+
+    private Quaternion EulerRotation(double a_roll, double a_pitch, double a_yaw) {
+        double yaw = Math.toRadians(a_yaw);
+        double pitch = Math.toRadians(a_pitch);
+        double roll = Math.toRadians(a_roll);
+
+        double cy = Math.cos(yaw * 0.5);
+        double sy = Math.sin(yaw * 0.5);
+        double cp = Math.cos(pitch * 0.5);
+        double sp = Math.sin(pitch * 0.5);
+        double cr = Math.cos(roll * 0.5);
+        double sr = Math.sin(roll * 0.5);
+
+        float Qx = (float)(sr * cp * cy - cr * sp * sy);
+        float Qy = (float)(cr * sp * cy + sr * cp * sy);
+        float Qz = (float)(cr * cp * sy - sr * sp * cy);
+        float Qw = (float)(cr * cp * cy + sr * sp * sy);
+
+        Quaternion quaternion = new Quaternion(Qx, Qy, Qz, Qw);
+        return quaternion;
+    }
+
+    private Mat undistord(Mat src)
+    {
+        Mat dst = new Mat(1280, 960, CvType.CV_8UC1);
+        Mat camMatrix = UndistortInfo(true);
+        Mat dstMatrix = UndistortInfo(false);
+
+        Imgproc.undistort(src, dst, camMatrix, dstMatrix);
+        System.out.println("Undistort");
+        return dst;
+    }
+
+    public static org.opencv.core.Point FindCircle(Mat image) {
+        Mat gray_image = image;
+        Mat circles = new Mat();
+        double x = 0, y = 0;
+        Imgproc.medianBlur(gray_image, gray_image, 5);
+        Imgproc.HoughCircles(gray_image, circles, Imgproc.HOUGH_GRADIENT, 1.0, (double) gray_image.rows() / 16, 50, 30.0, 1, 30);
+
+        for (int i = 0; i < circles.cols(); i++) {
+            double[] c = circles.get(0, i);
+            x += Math.round(c[0]);
+            y += Math.round(c[1]);
+        }
+        x = x/circles.cols();
+        y = y/circles.cols();
+        return new org.opencv.core.Point(x, y);
+    }
+
+    private static void sleep(int sec) {
+        try {
+            Thread.sleep(sec*1000);
+        }
+        catch(InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void FlashLight(boolean Switch) {
+        if(Switch) {
+            api.flashlightControlFront(0.8f);
+        } else if(!Switch) {
+            api.flashlightControlFront(0f);
+        }
+        sleep(1);
+    }
+
+    @Override
+    protected void runPlan2(){
+        // write here your plan 2
+    }
+
+    @Override
+    protected void runPlan3(){
+        // write here your plan 3
+    }
+
+}
